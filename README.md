@@ -7,8 +7,26 @@ their variants, like the Multichannel Multi - Scale Filtering Building Index (MM
 Bi Q., Qin K., Zhang H., Zhang Y., Li Z., Xu K. (2019).
 
 Requirements:
+- cv2
 - numpy
 - rasterio
 - skimage
 - sklearn
 - tqdm
+
+
+Test Image (courtesy of Maxar DigitalGlobe Open Data Program):
+
+![alt text](https://github.com/ThomasWangWeiHong/Multi-Scale-Filtering-Building-Index/blob/master/Test_Image.JPG)
+
+MFBI Image:
+
+![alt text](https://github.com/ThomasWangWeiHong/Multi-Scale-Filtering-Building-Index/blob/master/MFBI_Image.JPG)
+
+MMFBI Version 1 Image:
+
+![alt text](https://github.com/ThomasWangWeiHong/Multi-Scale-Filtering-Building-Index/blob/master/MMFBI_v1_Image.JPG)
+
+MMFBI Version 2 Image:
+
+![alt text](https://github.com/ThomasWangWeiHong/Multi-Scale-Filtering-Building-Index/blob/master/MMFBI_v2_Image.JPG)
