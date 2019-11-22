@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import rasterio
 from skimage.exposure import rescale_intensity
@@ -25,20 +26,14 @@ def grayscale_raster_creation(input_MS_file, output_filename):
     
     with rasterio.open(input_MS_file) as f:
         metadata = f.profile
-        img = np.transpose(f.read(tuple(np.arange(metadata['count']) + 1)), [1, 2, 0])
-    gray = np.zeros((int(img.shape[0]), int(img.shape[1]), 1))
-    
-    for i in range(img.shape[0]):
-        for j in range(img.shape[1]):
-            gray[i, j, 0] = max(img[i, j, 0], img[i, j, 1], img[i, j, 2])
+        img = np.transpose(f.read(tuple(np.arange(metadata['count']) + 1)), [1, 2, 0])[:, :, 0 : 3]
+        
+    gray = np.max(img, axis = 2).astype(metadata['dtype'])
             
-    gray = np.transpose(gray, [2, 0, 1]).astype('float32')
     
     metadata['count'] = 1
-    metadata['dtype'] = 'float32'
-    
     with rasterio.open(output_filename, 'w', **metadata) as dst:
-        dst.write(gray)
+        dst.write(gray[np.newaxis, :, :])
     
     return gray
 
@@ -71,22 +66,26 @@ def MFBI_generation(input_gray_filename, output_filename, min_scale, max_scale, 
     if (max_scale % 2 == 0):
         raise ValueError('Please input an odd number for max_scale.')
     
+    
+    
     with rasterio.open(input_gray_filename) as f:
         metadata = f.profile
         gray_img = f.read(1)
+        
+    gray_img = np.clip(gray_img, np.percentile(gray_img, 5), np.percentile(gray_img, 95))
     
     max_buffer = int((max_scale - 1) / 2)
-    gray_img_padded = np.zeros(((gray_img.shape[0] + 2 * max_buffer), (gray_img.shape[1] + 2 * max_buffer)))
-    gray_img_padded[max_buffer : (max_buffer + gray_img.shape[0]), max_buffer : (max_buffer + gray_img.shape[1])] = gray_img
+    
+    
     
     FP_img = np.zeros((gray_img.shape[0], gray_img.shape[1], int((max_scale - min_scale) / step_size) + 1))
     
     for scale in tqdm(range(min_scale, max_scale + 1, step_size), mininterval = 300):
         buffer = int((scale - 1) / 2)
-        for i in range(max_buffer, gray_img_padded.shape[0] - max_buffer):            
-            for j in range(max_buffer, gray_img_padded.shape[1] - max_buffer) :                                                                                                                                   
-                array = gray_img_padded[(i - buffer) : (i + buffer + 1), (j - buffer) : (j + buffer + 1)]
-                FP_img[i - max_buffer, j - max_buffer, int((scale - min_scale) / step_size)] = np.mean(array)
+        avg_kernel = np.ones((buffer, buffer)) / (buffer ** 2)
+        FP_img[:, :, int((scale - min_scale) / step_size)] = cv2.filter2D(gray_img, ddepth = -1, kernel = avg_kernel)
+        
+        
                 
     DFP_list = []
     
@@ -96,9 +95,10 @@ def MFBI_generation(input_gray_filename, output_filename, min_scale, max_scale, 
         
     DFP_img = np.concatenate(DFP_list, axis = 2)
     
-    MFBI = np.expand_dims(np.mean(DFP_img, axis = 2, dtype = metadata['dtype']), axis = 2)
-    MFBI = rescale_intensity(MFBI, out_range = (0, 1)).astype(metadata['dtype'])
+    MFBI = np.expand_dims(np.mean(DFP_img, axis = 2), axis = 2)
+    MFBI = rescale_intensity(MFBI, out_range = (0, 1)).astype(np.float32)
     
+    metadata['dtype'] = 'float32'
     with rasterio.open(output_filename, 'w', **metadata) as dst:
         dst.write(np.transpose(MFBI, [2, 0, 1]))
         
@@ -134,10 +134,16 @@ def MMFBI_v1_creation(input_MS_filename, output_filename, min_scale, max_scale, 
     if (max_scale % 2 == 0):
         raise ValueError('Please input an odd number for max_scale.')
     
+    
+    
     with rasterio.open(input_MS_filename) as f:
         metadata = f.profile
         img = np.transpose(f.read(tuple(np.arange(metadata['count']) + 1)), [1, 2, 0])
         
+    img = np.clip(img, np.percentile(img, 5), np.percentile(img, 95))
+
+    
+    
     band_list = []
     
     for band in range(img.shape[2]):
@@ -147,18 +153,18 @@ def MMFBI_v1_creation(input_MS_filename, output_filename, min_scale, max_scale, 
     pca_components = PCA().fit_transform(band_array)
     pc1 = np.reshape(pca_components[:, 0], (img.shape[0], img.shape[1]))
     
+    
     max_buffer = int((max_scale - 1) / 2)
-    pc1_img_padded = np.zeros(((img.shape[0] + 2 * max_buffer), (img.shape[1] + 2 * max_buffer)))
-    pc1_img_padded[max_buffer : (max_buffer + img.shape[0]), max_buffer : (max_buffer + img.shape[1])] = pc1
+    
     
     FP_img = np.zeros((img.shape[0], img.shape[1], int((max_scale - min_scale) / step_size) + 1))
     
     for scale in tqdm(range(min_scale, max_scale + 1, step_size), mininterval = 300):
         buffer = int((scale - 1) / 2)
-        for i in range(max_buffer, pc1_img_padded.shape[0] - max_buffer):            
-            for j in range(max_buffer, pc1_img_padded.shape[1] - max_buffer) :                                                                                                                                   
-                array = pc1_img_padded[(i - buffer) : (i + buffer + 1), (j - buffer) : (j + buffer + 1)]
-                FP_img[i - max_buffer, j - max_buffer, int((scale - min_scale) / step_size)] = np.mean(array)
+        avg_kernel = np.ones((buffer, buffer)) / (buffer ** 2)
+        FP_img[:, :, int((scale - min_scale) / step_size)] = cv2.filter2D(pc1, ddepth = -1, kernel = avg_kernel)
+
+        
                 
     DFP_list = []
     
@@ -214,6 +220,9 @@ def MMFBI_v2_creation(input_MS_filename, output_filename, min_scale, max_scale, 
         metadata = f.profile
         img = np.transpose(f.read(tuple(np.arange(metadata['count']) + 1)), [1, 2, 0])
         
+    img = np.clip(img, np.percentile(img, 5), np.percentile(img, 95))
+    
+    
     metadata['dtype'] = 'float32'
     max_buffer = int((max_scale - 1) / 2)
         
@@ -221,17 +230,15 @@ def MMFBI_v2_creation(input_MS_filename, output_filename, min_scale, max_scale, 
     
     for band in range(img.shape[2]):
         gray = img[:, :, band]
-        gray_img_padded = np.zeros(((img.shape[0] + 2 * max_buffer), (img.shape[1] + 2 * max_buffer)))
-        gray_img_padded[max_buffer : (max_buffer + img.shape[0]), max_buffer : (max_buffer + img.shape[1])] = gray
-        
+               
         FP_img = np.zeros((img.shape[0], img.shape[1], int((max_scale - min_scale) / step_size) + 1))
         
         for scale in tqdm(range(min_scale, max_scale + 1, step_size), mininterval = 300):
             buffer = int((scale - 1) / 2)
-            for i in range(max_buffer, gray_img_padded.shape[0] - max_buffer):            
-                for j in range(max_buffer, gray_img_padded.shape[1] - max_buffer) :                                                                                                                                   
-                    array = gray_img_padded[(i - buffer) : (i + buffer + 1), (j - buffer) : (j + buffer + 1)]
-                    FP_img[i - max_buffer, j - max_buffer, int((scale - min_scale) / step_size)] = np.mean(array)
+            avg_kernel = np.ones((buffer, buffer)) / (buffer ** 2)
+            FP_img[:, :, int((scale - min_scale) / step_size)] = cv2.filter2D(gray, ddepth = -1, kernel = avg_kernel)
+
+            
                     
         DFP_list = []
     
@@ -259,18 +266,16 @@ def MMFBI_v2_creation(input_MS_filename, output_filename, min_scale, max_scale, 
     
     pca_components = PCA().fit_transform(band_array)
     pc1 = np.reshape(pca_components[:, 0], (img.shape[0], img.shape[1]))
-    
-    pc1_img_padded = np.zeros(((img.shape[0] + 2 * max_buffer), (img.shape[1] + 2 * max_buffer)))
-    pc1_img_padded[max_buffer : (max_buffer + img.shape[0]), max_buffer : (max_buffer + img.shape[1])] = pc1
+
     
     FP_img = np.zeros((img.shape[0], img.shape[1], int((max_scale - min_scale) / step_size) + 1))
     
     for scale in tqdm(range(min_scale, max_scale + 1, step_size), mininterval = 300):
         buffer = int((scale - 1) / 2)
-        for i in range(max_buffer, pc1_img_padded.shape[0] - max_buffer):            
-            for j in range(max_buffer, pc1_img_padded.shape[1] - max_buffer) :                                                                                                                                   
-                array = pc1_img_padded[(i - buffer) : (i + buffer + 1), (j - buffer) : (j + buffer + 1)]
-                FP_img[i - max_buffer, j - max_buffer, int((scale - min_scale) / step_size)] = np.mean(array)
+        avg_kernel = np.ones((buffer, buffer)) / (buffer ** 2)
+        FP_img[:, :, int((scale - min_scale) / step_size)] = cv2.filter2D(pc1, ddepth = -1, kernel = avg_kernel)
+
+        
                 
     DFP_list = []
     
